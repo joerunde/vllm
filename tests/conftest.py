@@ -11,8 +11,7 @@ from transformers import (AutoModelForCausalLM, AutoProcessor,
 
 from vllm import LLM, SamplingParams
 from vllm.config import TokenizerPoolConfig, VisionLanguageConfig
-from vllm.model_executor.parallel_utils.parallel_state import (
-    destroy_model_parallel)
+from vllm.distributed import destroy_model_parallel
 from vllm.sequence import MultiModalData
 from vllm.transformers_utils.tokenizer import get_tokenizer
 
@@ -297,6 +296,7 @@ class VllmRunner:
         tensor_parallel_size: int = 1,
         block_size: int = 16,
         enable_chunked_prefill: bool = False,
+        swap_space=4,
         **kwargs,
     ) -> None:
         self.model = LLM(
@@ -304,7 +304,7 @@ class VllmRunner:
             tokenizer=tokenizer_name,
             trust_remote_code=True,
             dtype=dtype,
-            swap_space=0,
+            swap_space=swap_space,
             disable_log_stats=disable_log_stats,
             tensor_parallel_size=tensor_parallel_size,
             max_model_len=max_model_len,
@@ -402,7 +402,7 @@ class VllmRunner:
         cleanup()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def vllm_runner():
     return VllmRunner
 
