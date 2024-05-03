@@ -50,6 +50,16 @@ class TokenizerGroup(BaseTokenizerGroup):
         tokenizer = await self.get_lora_tokenizer_async(lora_request)
         return self._encode(tokenizer, prompt, truncate_to)
 
+    def decode(self, token_ids: List[int], request_id: Optional[str] = None,
+               lora_request: Optional[LoRARequest] = None) -> str:
+        tokenizer = self.get_lora_tokenizer(lora_request)
+        return tokenizer.decode(token_ids)
+
+    async def decode_async(self, token_ids: List[int], request_id: Optional[str] = None,
+                           lora_request: Optional[LoRARequest] = None) -> str:
+        tokenizer = await self.get_lora_tokenizer_async(lora_request)
+        return tokenizer.decode(token_ids)
+
     @staticmethod
     def _encode(tokenizer: PreTrainedTokenizer, prompt: str,
                 truncate_to: Optional[int]) -> List[int]:

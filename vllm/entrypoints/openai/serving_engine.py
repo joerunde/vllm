@@ -200,8 +200,10 @@ class OpenAIServing:
             raise ValueError(
                 "Only one of prompt or prompt_ids should be provided.")
 
+        # A tokenizer is always required, either to tokenizer the prompt or detokenize the prompt_ids
+        tokenizer = await self.engine.get_tokenizer_group()
+
         if prompt_ids is None:
-            tokenizer = await self.engine.get_tokenizer_group()
             input_ids = await tokenizer.encode_async(
                 prompt,
                 request_id,
@@ -211,10 +213,15 @@ class OpenAIServing:
             input_ids = prompt_ids[-truncate_prompt_tokens:]
         else:
             input_ids = prompt_ids
-
-        input_text = prompt if prompt is not None else self.tokenizer.decode(
-            prompt_ids)
         token_num = len(input_ids)
+
+        if prompt is None:
+            input_text = await tokenizer.decode_async(
+                prompt_ids,
+                request_id,
+                lora_request)
+        else:
+            input_text = prompt
 
         if request.max_tokens is None:
             if token_num >= self.max_model_len:

@@ -139,6 +139,63 @@ class RayTokenizerGroupPool(BaseTokenizerGroup):
             self._idle_actors.put_nowait(actor)
         return ret
 
+    def decode(self,
+               token_ids: List[int],
+               request_id: Optional[str] = None,
+               lora_request: Optional[LoRARequest] = None) -> str:
+        """Encode a prompt using the tokenizer group.
+
+        We pick an idle actor and use it to encode the prompt.
+        The actor is then put back in the queue for future use.
+        This is blocking.
+        """
+        self._ensure_queue_initialized()
+        assert self._idle_actors is not None
+
+        if self._idle_actors.empty():
+            raise RuntimeError("No idle actors available.")
+        actor = self._idle_actors.get_nowait()
+        try:
+            ret = ray.get(
+                actor.decode.remote(request_id=request_id,
+                                    token_ids=token_ids,
+                                    lora_request=lora_request))
+        finally:
+            # Put the actor back in the queue.
+            # This is done in a finally block to ensure that the actor is
+            # always put back in the queue, even if an exception/cancellation
+            # is raised.
+            self._idle_actors.put_nowait(actor)
+        return ret
+
+    async def decode_async(self,
+                           token_ids: List[int],
+                           request_id: Optional[str] = None,
+                           lora_request: Optional[LoRARequest] = None) -> str:
+        """Encode a prompt using the tokenizer group.
+
+        We pick an idle actor and use it to encode the prompt.
+        If there are no idle actors, we wait until one becomes
+        available.
+        The actor is then put back in the queue for future use.
+        This is non-blocking.
+        """
+        self._ensure_queue_initialized()
+        assert self._idle_actors is not None
+
+        actor = await self._idle_actors.get()
+        try:
+            ret = await actor.decode.remote(request_id=request_id,
+                                            token_ids=token_ids,
+                                            lora_request=lora_request)
+        finally:
+            # Put the actor back in the queue.
+            # This is done in a finally block to ensure that the actor is
+            # always put back in the queue, even if an exception/cancellation
+            # is raised.
+            self._idle_actors.put_nowait(actor)
+        return ret
+
     def get_max_input_len(self,
                           lora_request: Optional[LoRARequest] = None
                           ) -> Optional[int]:

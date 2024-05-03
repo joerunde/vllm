@@ -40,6 +40,24 @@ class BaseTokenizerGroup(ABC):
         pass
 
     @abstractmethod
+    def decode(self,
+               token_ids: List[int],
+               request_id: Optional[str] = None,
+               lora_request: Optional[LoRARequest] = None,
+               ) -> str:
+        """Decode some tokens using the tokenizer group"""
+        pass
+
+    @abstractmethod
+    async def decode_async(self,
+                           token_ids: List[int],
+                           request_id: Optional[str] = None,
+                           lora_request: Optional[LoRARequest] = None,
+                           ) -> str:
+        """Decode some tokens using the tokenizer group"""
+        pass
+
+    @abstractmethod
     def get_lora_tokenizer(
             self,
             lora_request: Optional[LoRARequest] = None
