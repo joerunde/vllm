@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from prometheus_client import make_asgi_app
 from starlette.routing import Mount
 
+from tests.utils import StubEngine
 import vllm.envs as envs
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncEngineDeadError, AsyncLLMEngine
@@ -262,10 +263,13 @@ async def build_server(
 
     engine_args = AsyncEngineArgs.from_cli_args(args)
     engine = (llm_engine
-              if llm_engine is not None else AsyncLLMEngine.from_engine_args(
+              if llm_engine is not None else StubEngine.from_engine_args(
                   engine_args, usage_context=UsageContext.OPENAI_API_SERVER))
 
+
+    print(llm_engine, engine)
     model_config = await engine.get_model_config()
+    print(model_config)
 
     if args.disable_log_requests:
         request_logger = None

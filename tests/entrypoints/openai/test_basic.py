@@ -8,7 +8,7 @@ from vllm.version import __version__ as VLLM_VERSION
 
 from ...utils import RemoteOpenAIServer
 
-MODEL_NAME = "HuggingFaceH4/zephyr-7b-beta"
+MODEL_NAME = "facebook/opt-125m"
 
 
 @pytest.fixture(scope="module")
@@ -17,8 +17,8 @@ def server():
         # use half precision for speed and memory savings in CI environment
         "--dtype",
         "bfloat16",
-        "--max-model-len",
-        "8192",
+        # "--max-model-len",
+        # "8192",
         "--enforce-eager",
         "--max-num-seqs",
         "128",

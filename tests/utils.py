@@ -5,16 +5,23 @@ import time
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, AsyncIterator, Coroutine, Dict, List
 
 import openai
 import ray
 import requests
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizer, AutoConfig
 
+from vllm.config import DecodingConfig, ModelConfig
 from vllm.distributed import (ensure_model_parallel_initialized,
                               init_distributed_environment)
+from vllm.engine.arg_utils import AsyncEngineArgs
+from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.entrypoints.openai.cli_args import make_arg_parser
+from vllm.lora.request import LoRARequest
+from vllm.outputs import RequestOutput
+from vllm.prompt_adapter.request import PromptAdapterRequest
+from vllm.sampling_params import SamplingParams
 from vllm.utils import FlexibleArgumentParser, get_open_port, is_hip
 
 if is_hip():
@@ -75,10 +82,12 @@ class RemoteOpenAIServer:
         # the current process might initialize cuda,
         # to be safe, we should use spawn method
         env['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
-        self.proc = subprocess.Popen(["vllm", "serve"] + [model] + cli_args,
-                                     env=env,
-                                     stdout=sys.stdout,
-                                     stderr=sys.stderr)
+        self.proc = subprocess.Popen(
+            ["python3", "-m", "vllm.entrypoints.openai.api_server", "--model"
+             ] + [model] + cli_args,
+            env=env,
+            stdout=sys.stdout,
+            stderr=sys.stderr)
         self._wait_for_server(url=self.url_for("health"),
                               timeout=self.MAX_SERVER_START_WAIT_S)
 
@@ -98,6 +107,9 @@ class RemoteOpenAIServer:
             except Exception as err:
                 result = self.proc.poll()
                 if result is not None and result != 0:
+                    print(
+                        f"\n\n~~~~~~~~~~~~~~~~~ {self.proc.returncode} {self.proc.stdout}"
+                    )
                     raise RuntimeError("Server exited unexpectedly.") from err
 
                 time.sleep(0.5)
@@ -305,3 +317,88 @@ def wait_for_gpu_memory_to_clear(devices: List[int],
                              f'{dur_s=:.02f} ({threshold_bytes/2**30=})')
 
         time.sleep(5)
+
+
+class StubEngine(AsyncLLMEngine):
+    """Injects an error into .generate() calls, to test error handling"""
+    
+    def __init__(self,
+                 *args,
+                 **kwargs) -> None:
+        self.worker_use_ray = False
+        self.engine_use_ray = False
+        self.log_requests = False
+        self.engine = None
+
+        self._errored_with = None
+
+        # Lazy initialized fields
+        self._request_tracker = None
+        self.tokenizer = None
+        self.model_config = None
+
+    def start_background_loop(self) -> None:
+        return None
+    
+    async def get_tokenizer(self, lora_request: LoRARequest | None = None) -> PreTrainedTokenizer:
+        return self.tokenizer
+    
+    async def get_model_config(self) -> ModelConfig:
+        return self.model_config
+    
+    async def get_decoding_config(self) -> DecodingConfig:
+        return DecodingConfig()
+    
+    async def is_tracing_enabled(self) -> bool:
+        return None
+    
+    @property
+    def is_running(self) -> bool:
+        return not self._errored_with
+    
+    @property
+    def is_stopped(self) -> bool:
+        return not self.is_running
+    
+    
+    async def check_health(self) -> None:
+        if not self.is_running:
+            raise RuntimeError("nope")
+    
+    @classmethod
+    def from_engine_args(
+        cls,
+        engine_args: AsyncEngineArgs,
+        *args, **kwargs
+    ) -> "AsyncLLMEngine":
+        stub = cls()
+
+        print("\n\n\n\n~~~~~~~~~~~~~~~~~~~~~~\n\n\n")
+        print(engine_args.model)
+
+        stub.tokenizer = AutoTokenizer.from_pretrained(engine_args.model)
+        stub.model_config = ModelConfig(
+            engine_args.model,
+            engine_args.model,
+            tokenizer_mode="auto",
+            trust_remote_code=False,
+            seed=0,
+            dtype="float16",
+            revision=None,
+            disable_sliding_window=True,
+        )
+        return stub
+
+    async def generate(self, *args, **kwargs) -> AsyncIterator[RequestOutput]:
+        for _ in range(2):
+            yield RequestOutput(
+                request_id="1",
+                prompt="asdf",
+                prompt_token_ids=[1,2,3],
+                prompt_logprobs=None,
+                outputs=[],
+                finished=None
+            )
+        self._errored_with = RuntimeError("foo")
+        raise self._errored_with
+    

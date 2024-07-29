@@ -837,6 +837,9 @@ class LLMEngine:
         for seq_group in ignored_seq_groups:
             request_output = RequestOutputFactory.create(seq_group)
             request_outputs.append(request_output)
+
+        # raise RuntimeError("fooo")
+
         return request_outputs
 
     def step(self) -> List[Union[RequestOutput, EmbeddingRequestOutput]]:
