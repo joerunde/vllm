@@ -1,4 +1,5 @@
 import pickle
+from contextlib import contextmanager
 from typing import AsyncIterator, Mapping, Optional
 
 import zmq
@@ -32,25 +33,32 @@ class RPCClient:
         """Destroy the ZeroMQ Context."""
         self.context.destroy()
 
+    @contextmanager
+    def socket(self):
+        # Ensure client sockets are always closed after use
+
+        # Connect to RPC socket for Request-Reply pattern,
+        # Note that we use DEALER to enable asynchronous communication
+        # to enable streaming.
+        socket = self.context.socket(zmq.constants.DEALER)
+        try:
+            socket.connect(self.path)
+            yield socket
+        finally:
+            socket.close()
+
     async def _send_one_way_rpc_request(self, request: RPC_REQUEST_TYPE,
                                         error_message: str):
         """Send one-way RPC request to trigger an action."""
+        with self.socket() as socket:
+            # Ping RPC Server with request.
+            await socket.send(pickle.dumps(request, pickle.HIGHEST_PROTOCOL))
 
-        # Connect to socket.
-        socket = self.context.socket(zmq.constants.DEALER)
-        socket.connect(self.path)
-
-        # Ping RPC Server with request.
-        await socket.send(pickle.dumps(request, pickle.HIGHEST_PROTOCOL))
-
-        # Await acknowledgement from RPCServer.
-        response = pickle.loads(await socket.recv())
+            # Await acknowledgement from RPCServer.
+            response = pickle.loads(await socket.recv())
 
         if not isinstance(response, str) or response != VLLM_RPC_SUCCESS_STR:
-            socket.close()
             raise ValueError(error_message)
-
-        socket.close()
 
         return response
 
@@ -77,21 +85,17 @@ class RPCClient:
         """Get the ModelConfig object from the RPC Server"""
 
         # Connect to socket.
-        socket = self.context.socket(zmq.constants.DEALER)
-        socket.connect(self.path)
+        with self.socket() as socket:
 
-        # Ping RPCServer with GET_MODEL_CONFIG request.
-        await socket.send(pickle.dumps(RPCUtilityRequest.GET_MODEL_CONFIG))
+            # Ping RPCServer with GET_MODEL_CONFIG request.
+            await socket.send(pickle.dumps(RPCUtilityRequest.GET_MODEL_CONFIG))
 
-        # Await the MODEL_CONFIG from the Server.
-        model_config = pickle.loads(await socket.recv())
+            # Await the MODEL_CONFIG from the Server.
+            model_config = pickle.loads(await socket.recv())
 
         if not isinstance(model_config, ModelConfig):
-            socket.close()
             raise ValueError("Expected ModelConfig object from RPC, but "
                              f"got {model_config}")
-
-        socket.close()
 
         return model_config
 
@@ -120,40 +124,34 @@ class RPCClient:
     ) -> AsyncIterator[RequestOutput]:
         """Send an RPCGenerateRequest to the RPCServer and stream responses."""
 
-        # Connect to RPC socket for Request-Reply pattern,
-        # Note that we use DEALER to enable asynchronous communication
-        # to enable streaming.
-        socket = self.context.socket(zmq.constants.DEALER)
-        socket.connect(self.path)
+        with self.socket() as socket:
 
-        # Send RPCGenerateRequest to the RPCServer.
-        await socket.send_multipart([
-            pickle.dumps(
-                RPCGenerateRequest(
-                    inputs=inputs,
-                    sampling_params=sampling_params,
-                    request_id=request_id,
-                    lora_request=lora_request,
-                    trace_headers=trace_headers,
-                    prompt_adapter_request=prompt_adapter_request),
-                pickle.HIGHEST_PROTOCOL)
-        ])
+            # Send RPCGenerateRequest to the RPCServer.
+            await socket.send_multipart([
+                pickle.dumps(
+                    RPCGenerateRequest(
+                        inputs=inputs,
+                        sampling_params=sampling_params,
+                        request_id=request_id,
+                        lora_request=lora_request,
+                        trace_headers=trace_headers,
+                        prompt_adapter_request=prompt_adapter_request),
+                    pickle.HIGHEST_PROTOCOL)
+            ])
 
-        # Stream back the results from the RPC Server.
-        while True:
-            message = await socket.recv()
-            request_output = pickle.loads(message)
+            # Stream back the results from the RPC Server.
+            while True:
+                message = await socket.recv()
+                request_output = pickle.loads(message)
 
-            if isinstance(request_output, Exception):
-                socket.close()
-                raise request_output
+                if isinstance(request_output, Exception):
+                    raise request_output
 
-            if request_output.finished:
-                break
+                if request_output.finished:
+                    break
+                yield request_output
+
             yield request_output
-
-        yield request_output
-        socket.close()
 
     async def check_health(self) -> None:
         """Raise if unhealthy"""
