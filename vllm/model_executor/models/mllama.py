@@ -52,6 +52,7 @@ from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.sequence import SequenceData
+from vllm.utils import is_list_of
 
 from .clip import CLIPMLP
 from .interfaces import SupportsMultiModal
@@ -73,7 +74,17 @@ class MllamaImagePixelInputs(TypedDict):
     """Shape: `(batch_size, max_num_image, max_num_tiles)`"""
 
 
-# TODO: support LlamaImageEmbeddingInputs
+class MllamaImageEmbeddingInputs(TypedDict):
+    type: Literal["image_embeds"]
+    data: torch.Tensor
+    """Shape: `(num_tokens, hidden_size)`
+
+    `hidden_size` must match the hidden size of the language model backbone
+    and is stored in the visual config of the model if we have one.
+    """
+
+
+MllamaImageInputs = Union[MllamaImagePixelInputs, MllamaImageEmbeddingInputs]
 
 
 def _get_num_image_in_last_group(prompt_token_ids: List[int]) -> int:
@@ -105,16 +116,41 @@ def input_processor_for_mllama(ctx: InputContext,
         inputs["encoder_multi_modal_data"] = {}
         return inputs
 
-    if isinstance(multi_modal_data['image'], Image.Image):
-        multi_modal_data['image'] = [multi_modal_data['image']]
+    image_data = multi_modal_data['image']
+    if isinstance(image_data, Image.Image):
+        image_data = [image_data]
+
+    if is_list_of(image_data, Image.Image):
+        num_tokens = get_last_group_tokens(
+            ctx=ctx,
+            prompt_token_ids=inputs["prompt_token_ids"],
+            image_data=image_data)
+    elif isinstance(image_data, torch.Tensor):
+        # assume this is embeddings
+        num_dims = len(image_data.shape)
+        if num_dims != 2:
+            raise ValueError(
+                f"Expected img embeds to be have 2 dimensions, got {num_dims}")
+        num_tokens = image_data.shape[0]
+
+    # Set encoder prompt length based on the number of tiles.
+    # This tells the block manager to allocate correct number
+    # of slots for encoder tokens.
+    inputs["encoder_prompt"] = MLLAMA_IMAGE_TOKEN * num_tokens
+    inputs["encoder_prompt_token_ids"] = [MLLAMA_IMAGE_TOKEN_ID] * num_tokens
+
+    return inputs
+
+
+def get_last_group_tokens(ctx: InputContext, prompt_token_ids,
+                          image_data: List[Image.Image]) -> int:
     # Since only the last group of consecutive images
     # are attended by the decoded tokens, we only need to
     # get the number of tiles for those images.
-    num_decode_images = _get_num_image_in_last_group(
-        inputs["prompt_token_ids"])
+    num_decode_images = _get_num_image_in_last_group(prompt_token_ids)
     hf_config = ctx.model_config.hf_config
     num_tiles = 0
-    for image in multi_modal_data["image"][::-1]:
+    for image in image_data[::-1]:
         width, height = image.size
         tile_size = hf_config.vision_config.image_size
         canvas_height, canvas_width = get_optimal_tiled_canvas(
@@ -130,17 +166,12 @@ def input_processor_for_mllama(ctx: InputContext,
         if num_decode_images == 0:
             break
 
-    # Set encoder prompt length based on the number of tiles.
-    # This tells the block manager to allocate correct number
-    # of slots for encoder tokens.
     assert hf_config.vision_config.image_size % 14 == 0, \
         "chunk size should be multiple of 14"
     token_per_chunk = (hf_config.vision_config.image_size // 14)**2 + 1
     num_tokens = num_tiles * token_per_chunk
-    inputs["encoder_prompt"] = MLLAMA_IMAGE_TOKEN * num_tokens
-    inputs["encoder_prompt_token_ids"] = [MLLAMA_IMAGE_TOKEN_ID] * num_tokens
 
-    return inputs
+    return num_tokens
 
 
 def get_max_mllama_image_tokens(ctx: InputContext) -> int:
@@ -1107,7 +1138,9 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
             )
 
         if image_embeds is not None:
-            raise NotImplementedError
+            # something something....
+            return MllamaImageEmbeddingInputs(type="image_embeds",
+                                              data=image_embeds)
 
         raise AssertionError("This line should be unreachable.")
 
@@ -1132,10 +1165,14 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
 
     def get_cross_attention_states(
         self,
-        image_inputs: MllamaImagePixelInputs,
+        image_inputs: MllamaImageInputs,
         attn_metadata: AttentionMetadata,
         actual_encoder_seq_lens: List[int],
     ) -> Tuple[torch.Tensor]:
+        if image_inputs['type'] == "image_embeds":
+            # Skip the vision model if we already have embeddings
+            return image_inputs["data"]
+
         # NOTE: llama's reference implementation runs vision model on CPU
         pixel_values = image_inputs['data']
         aspect_ratio_ids = image_inputs['aspect_ratio_ids']
@@ -1145,6 +1182,9 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
                                                    aspect_ratio_mask)
         cross_attention_states = self.multi_modal_projector(
             cross_attention_states)
+        
+        # TODO: use embeddings out of here instead
+        
 
         bsz, _, _, _, image_token_dim = tuple(cross_attention_states.shape)
         cross_attention_states = cross_attention_states.view(
