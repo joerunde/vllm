@@ -53,6 +53,7 @@ class EngineClient(ABC):
         trace_headers: Optional[Mapping[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
+        trust_token_ids: bool = False
     ) -> AsyncGenerator[RequestOutput, None]:
         """Generate outputs for a request."""
         ...

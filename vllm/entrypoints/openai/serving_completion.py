@@ -121,6 +121,13 @@ class OpenAIServingCompletion(OpenAIServing):
                 ))
 
             for i, prompt_inputs in enumerate(prompts):
+
+                if len(prompts) > 1:
+                    raw_prompt = request.prompt[i]
+                else:
+                    raw_prompt = request.prompt
+                trust_token_ids = isinstance(raw_prompt, str)
+
                 sampling_params: Union[SamplingParams, BeamSearchParams]
                 default_max_tokens = self.max_model_len - len(
                     prompt_inputs["prompt_token_ids"])
@@ -166,6 +173,7 @@ class OpenAIServingCompletion(OpenAIServing):
                         prompt_adapter_request=prompt_adapter_request,
                         trace_headers=trace_headers,
                         priority=request.priority,
+                        trust_token_ids=trust_token_ids,
                     )
 
                 generators.append(generator)

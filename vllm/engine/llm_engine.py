@@ -647,6 +647,7 @@ class LLMEngine:
         prompt_adapter_request: Optional[PromptAdapterRequest],
         trace_headers: Optional[Mapping[str, str]] = None,
         priority: int = 0,
+        trust_token_ids: bool = False,
     ) -> Optional[SequenceGroup]:
         """Add a processed request to the engine's request pool.
         return the created sequence group.
@@ -665,7 +666,7 @@ class LLMEngine:
             )
             return None
 
-        self._validate_model_inputs(processed_inputs, lora_request)
+        self._validate_model_inputs(processed_inputs, lora_request, trust_token_ids)
         # Create the sequences.
         block_size = self.cache_config.block_size
         seq_id = next(self.seq_counter)
@@ -766,6 +767,7 @@ class LLMEngine:
             trace_headers: Optional[Mapping[str, str]] = None,
             prompt_adapter_request: Optional[PromptAdapterRequest] = None,
             priority: int = 0,
+            trust_token_ids: bool = False,
             *,
             inputs: Optional[PromptType] = None,  # DEPRECATED
     ) -> None:
@@ -851,6 +853,7 @@ class LLMEngine:
             prompt_adapter_request=prompt_adapter_request,
             trace_headers=trace_headers,
             priority=priority,
+            trust_token_ids=trust_token_ids,
         )
 
     def _create_sequence_group_with_sampling(
@@ -1926,7 +1929,8 @@ class LLMEngine:
 
     def _validate_model_inputs(self, inputs: Union[DecoderOnlyInputs,
                                                    EncoderDecoderInputs],
-                               lora_request: Optional[LoRARequest]):
+                               lora_request: Optional[LoRARequest],
+                               trust_token_ids: bool = False):
         if self.model_config.is_multimodal_model:
             # For encoder-decoder multimodal models, the max_prompt_len
             # restricts the decoder prompt length
@@ -1945,11 +1949,12 @@ class LLMEngine:
         # that are greater than the max token id before running the model.
         # However, these token ids will later crash a cuda kernel at runtime
         # with an index out of bounds error. This will crash the entire engine.
-        tokenizer = self.get_tokenizer(lora_request)
-        max_input_id = max(prompt_ids)
-        if max_input_id > tokenizer.max_token_id:
-            raise ValueError(
-                "Token id {} is out of vocabulary".format(max_input_id))
+        if not trust_token_ids:
+            tokenizer = self.get_tokenizer(lora_request)
+            max_input_id = max(prompt_ids)
+            if max_input_id > tokenizer.max_token_id:
+                raise ValueError(
+                    "Token id {} is out of vocabulary".format(max_input_id))
 
         if self.model_config.is_multimodal_model:
             max_prompt_len = self.model_config.max_model_len
