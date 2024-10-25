@@ -128,22 +128,19 @@ def input_processor_for_mllama(ctx: InputContext,
     elif isinstance(image_data, torch.Tensor):
         # assume this is embeddings
         num_dims = len(image_data.shape)
-        if num_dims != 5:
+        if num_dims != 4:
             raise ValueError(
                 f"Expected img embeds to be have 5 dimensions, got {num_dims}")
         # Dimensions should be....
-        # Batch size x image per batch x tile per image x tokens per tile x embedding dimension
+        # num images x tile per image x tokens per tile x embedding dimension
         num_tokens = image_data.shape[0] * image_data.shape[1] * \
-            image_data.shape[2] * image_data.shape[3]
+            image_data.shape[2]
         
-        if image_data.shape[0] != 1:
-            # TODO: figure out batching
-            raise ValueError(f"Expected embeddings for single request but got batch of size {image_data.shape[0]}")
-        
-        # set num_tiles????
-        # TODO: Ask alex why this won't work
-        inputs["num_tiles"] = image_data.shape[1] * image_data.shape[2]
-
+        # Looks like no batchy batch here- maybe just multi-image single-request
+        # if image_data.shape[0] != 1:
+        #     # TODO: figure out batching? (I don't think a batch will reach here though)
+        #     raise ValueError(f"Expected embeddings for single request but got batch of size {image_data.shape[0]}")
+    
     # Set encoder prompt length based on the number of tiles.
     # This tells the block manager to allocate correct number
     # of slots for encoder tokens.
@@ -1210,7 +1207,6 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
             )
 
         if image_embeds is not None:
-            # something something....
             return MllamaImageEmbeddingInputs(type="image_embeds",
                                               data=image_embeds)
 
@@ -1355,9 +1351,16 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
             if "num_tiles" in kwargs:
                 num_tiles_tensor = kwargs.pop("num_tiles")
             else:
-                # embedding input...
+                # embedding input
+                # num_tiles is 3x nested tensor...
+                # batch size x images per batch x ?????
+
+                # Assume bsize 1 & 1 image per request for now
+                # image_embeds should be shape:
+                # batch * images * tiles per image * tokens per tile * embedding size
                 embeddings = image_inputs['data']
-                num_tiles_tensor = torch.tensor([[embeddings.shape[2]] * embeddings.shape[1]])
+                num_tiles_tensor = torch.tensor([[[embeddings.shape[2]]]])
+            
             num_tiles = [t[0].tolist() for t in num_tiles_tensor]
             num_tokens_per_tile = (self.image_size // 14)**2 + 1
             actual_encoder_seq_lens = [
