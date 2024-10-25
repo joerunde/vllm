@@ -128,18 +128,18 @@ def input_processor_for_mllama(ctx: InputContext,
     elif isinstance(image_data, torch.Tensor):
         # assume this is embeddings
         num_dims = len(image_data.shape)
-        if num_dims != 4:
-            raise ValueError(
-                f"Expected img embeds to be have 5 dimensions, got {num_dims}")
+        if num_dims < 4 or num_dims > 5 or (num_dims == 5 and image_data.shape[0] > 1):
+            raise ValueError("Expected mllama image embedding to have 4"
+                             " dimensions, or a batch of size 1 with 5"
+                             " dimensions")
+        if num_dims == 5:
+            # Remove the batch dimension, vLLM will re-batch it for us
+            inputs["encoder_multi_modal_data"]["image"] = image_data[0]
+            
         # Dimensions should be....
         # num images x tile per image x tokens per tile x embedding dimension
         num_tokens = image_data.shape[0] * image_data.shape[1] * \
             image_data.shape[2]
-        
-        # Looks like no batchy batch here- maybe just multi-image single-request
-        # if image_data.shape[0] != 1:
-        #     # TODO: figure out batching? (I don't think a batch will reach here though)
-        #     raise ValueError(f"Expected embeddings for single request but got batch of size {image_data.shape[0]}")
     
     # Set encoder prompt length based on the number of tiles.
     # This tells the block manager to allocate correct number
@@ -1350,10 +1350,14 @@ class MllamaForConditionalGeneration(nn.Module, SupportsMultiModal):
             # See input_processor_for_mllama() for more details.
             if "num_tiles" in kwargs:
                 num_tiles_tensor = kwargs.pop("num_tiles")
+
+                print(f"\nNUM_TILES_TENSOR: {num_tiles_tensor}")
+                print(f"Shape: {num_tiles_tensor.shape}\n")
             else:
-                # embedding input
-                # num_tiles is 3x nested tensor...
-                # batch size x images per batch x ?????
+                # embedding input: we need to figure out what `num_tiles` should be
+
+                # num_tiles is a 3-dimension tensor
+                # batch_size x 1 x images_per_request
 
                 # Assume bsize 1 & 1 image per request for now
                 # image_embeds should be shape:
