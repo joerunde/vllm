@@ -120,10 +120,10 @@ def sample_sharegpt_requests(
                          ) if fixed_output_len is None else fixed_output_len
         if prompt_len < 4 or (fixed_output_len is None and output_len < 4):
             # Prune too short sequences.
-            continue
+            pass
         if prompt_len > 1024 or prompt_len + output_len > 2048:
             # Prune too long sequences.
-            continue
+            pass
         filtered_dataset.append((prompt, prompt_len, output_len, None))
 
     return filtered_dataset
