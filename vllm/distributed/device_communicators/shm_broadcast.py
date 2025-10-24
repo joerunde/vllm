@@ -462,16 +462,17 @@ class MessageQueue:
                         poll_timeout_ms = 50
                         if timeout is not None:
                             remaining = start_time + timeout - time.monotonic()
-                            poll_timeout_ms = min(int(remaining * 1000),
-                                                  poll_timeout_ms)
+                            poll_timeout_ms = min(
+                                int(remaining * 1000), poll_timeout_ms
+                            )
                         if poll_timeout_ms > 0:
-                            ev = self.local_tick_socket.poll(
-                                timeout=poll_timeout_ms)
+                            ev = self.local_tick_socket.poll(timeout=poll_timeout_ms)
                             if ev > 0:
                                 while True:
                                     try:
                                         self.local_tick_socket.recv(
-                                            flags=zmq.NOBLOCK, copy=False)
+                                            flags=zmq.NOBLOCK, copy=False
+                                        )
                                     except zmq.Again:
                                         break
                     else:
