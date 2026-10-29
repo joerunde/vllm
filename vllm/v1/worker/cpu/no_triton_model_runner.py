@@ -369,8 +369,9 @@ class NoTritonCPUModelRunner(LoRAModelRunnerMixin):
                 spec.first_spec if isinstance(spec, UniformTypeKVCacheSpecs) else spec
             )
             slot_mapping_enabled.append(layer_spec.uses_slot_mapping)
+            # Backport to v0.31.0: no num_retained_tokens there, so keep every block.
             sliding_window_reach.append(
-                layer_spec.num_retained_tokens
+                getattr(layer_spec, "num_retained_tokens", 0)
                 if isinstance(layer_spec, SlidingWindowSpec)
                 else 0
             )

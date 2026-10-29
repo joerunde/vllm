@@ -17,7 +17,14 @@ from vllm.logger import init_logger
 from vllm.platforms import current_platform
 from vllm.sampling_params import SamplingParams
 from vllm.v1.outputs import LogprobsTensors, SamplingMaskLists
-from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p
+from vllm.v1.sample.ops.topk_topp_sampler import (
+    apply_top_k_top_p as _apply_top_k_top_p,
+)
+
+
+# Backport to v0.31.0: its apply_top_k_top_p has no has_topp_only_rows.
+def apply_top_k_top_p(logits, k, p, has_topp_only_rows=True):
+    return _apply_top_k_top_p(logits, k, p)
 from vllm.v1.watermarking.watermarker import RandomSampler, Watermarker
 from vllm.v1.worker.cpu.gumbel import gumbel_sample
 from vllm.v1.worker.cpu.input_batch import InputBatch, get_num_sampled_and_rejected

@@ -353,8 +353,11 @@ def build_attn_metadata(
                     if model_specific_attn_metadata is not None
                     else {}
                 )
-                metadata = attn_group.build_metadata(
-                    common_attn_metadata, **attn_metadata_extra_kwargs
+                # Backport to v0.31.0: no AttentionGroup.build_metadata there.
+                metadata = attn_metadata_builder.build(
+                    common_prefix_len=0,
+                    common_attn_metadata=common_attn_metadata,
+                    **attn_metadata_extra_kwargs,
                 )
             if reuse_key is not None and reuse_key not in cached_metadata:
                 cached_metadata[reuse_key] = metadata
